@@ -62,16 +62,16 @@ The system design separates data parsing, cached distance calculations, feasibil
 
 ```mermaid
 graph TD
-    Data[Schneider TXT File] -->|Parser| Parse[parser.py]
-    Parse -->|Nodes & Vehicle| Prov[distance.py: DistanceProvider]
-    Prov -->|O(1) Matrix & Sorted Stations| Construct[proposed_method.py: Best-Insertion Construction]
-    Construct -->|Score = Cost + 0.1 * due_time| InitialFeas[charging.py: Feasibility-Aware Charging Insertion]
-    InitialFeas -->|Skip Pruning for Speed| Initial[Initial Route Plan]
-    Initial -->|Route Merging| LocalSearch[local_search.py: Relocate / Exchange / 2-Opt]
-    LocalSearch -->|Payload Capacity Filters| Eval[evaluation.py: Violation Checks]
-    Eval -->|Feasible?| Prune[charging.py: Station Pruning]
-    Prune -->|Accept?| ILS[proposed_method.py: Iterated Local Search Loop]
-    ILS -->|Perturbation / Simulated Annealing| Output[output/: CSV & Route Visualizations]
+    Data["Schneider TXT File"] -->|"Parser"| Parse["parser.py"]
+    Parse -->|"Nodes & Vehicle"| Prov["distance.py: DistanceProvider"]
+    Prov -->|"O(1) Matrix & Sorted Stations"| Construct["proposed_method.py: Best-Insertion Construction"]
+    Construct -->|"Score = Cost + 0.1 * due_time"| InitialFeas["charging.py: Feasibility-Aware Charging Insertion"]
+    InitialFeas -->|"Skip Pruning for Speed"| Initial["Initial Route Plan"]
+    Initial -->|"Route Merging"| LocalSearch["local_search.py: Relocate / Exchange / 2-Opt"]
+    LocalSearch -->|"Payload Capacity Filters"| Eval["evaluation.py: Violation Checks"]
+    Eval -->|"Feasible?"| Prune["charging.py: Station Pruning"]
+    Prune -->|"Accept?"| ILS["proposed_method.py: Iterated Local Search Loop"]
+    ILS -->|"Perturbation / Simulated Annealing"| Output["output/: CSV & Route Visualizations"]
 ```
 
 ---
