@@ -1,0 +1,4 @@
+instance_name,num_customers,num_charging_stations,battery_capacity_Q,load_capacity_C,feasibility,total_distance,route_count,runtime,capacity_violations,battery_violations,time_window_violations
+C101_21,100,21,79.69,200.0,True,1361.5736490374072,14,49.06813383102417,0.0,0.0,0.0
+R101_21,100,21,62.14,200.0,True,1923.235607814783,25,37.23844885826111,0.0,0.0,0.0
+RC101_21,100,21,79.69,200.0,True,2183.69083033534,22,40.254223108291626,0.0,0.0,0.0

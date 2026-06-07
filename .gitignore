@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments and IDEs
+.env
+.venv
+env/
+venv/
+ENV/
+.idea/
+.vscode/
+.streamlit/
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
