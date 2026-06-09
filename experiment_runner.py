@@ -7,6 +7,7 @@ from baseline import solve_baseline
 from proposed_method import solve_proposed
 from evaluation import evaluate_solution
 from visualization import plot_routes
+from bks_database import BKS_DATABASE
 
 def discover_local_instances(data_dir: str) -> List[str]:
     """Scans data_dir for .txt files and returns list of instance names."""
@@ -14,11 +15,11 @@ def discover_local_instances(data_dir: str) -> List[str]:
         return []
     instances = []
     for f in os.listdir(data_dir):
-        if f.endswith('.txt'):
+        if f.endswith('.txt') and 'copy' not in f.lower():
             instances.append(f[:-4])
     return sorted(instances)
 
-def run_benchmarks(instances: List[str], data_dir: str, output_dir: str) -> None:
+def run_benchmarks(instances: List[str], data_dir: str, output_dir: str, method: str = "alns") -> None:
     """Runs comparative experiments between the Baseline and Proposed methods using local files only."""
     os.makedirs(output_dir, exist_ok=True)
     
@@ -27,18 +28,29 @@ def run_benchmarks(instances: List[str], data_dir: str, output_dir: str) -> None
     # If instances list is empty or None, discover local instances
     target_instances = instances if instances else discover_local_instances(data_dir)
     
+    # Build case-insensitive filename mapping to handle casing discrepancies on Linux/macOS
+    all_files = os.listdir(data_dir)
+    file_map = {}
+    for f in all_files:
+        if f.endswith('.txt') and 'copy' not in f.lower():
+            file_map[f[:-4].lower()] = f
+            
     actual_files = []
     for name in target_instances:
-        file_path = os.path.join(data_dir, f"{name}.txt")
-        if os.path.exists(file_path):
-            actual_files.append((name, file_path))
+        key = name.lower()
+        if key in file_map:
+            actual_files.append((file_map[key][:-4], os.path.join(data_dir, file_map[key])))
         else:
-            # Check for name without extension
-            fallback_path = os.path.join(data_dir, name)
-            if os.path.exists(fallback_path):
-                actual_files.append((name, fallback_path))
+            # Fallback path directly
+            file_path = os.path.join(data_dir, f"{name}.txt")
+            if os.path.exists(file_path):
+                actual_files.append((name, file_path))
             else:
-                raise FileNotFoundError(f"Required benchmark instance file not found at: {file_path}")
+                fallback_path = os.path.join(data_dir, name)
+                if os.path.exists(fallback_path):
+                    actual_files.append((name, fallback_path))
+                else:
+                    raise FileNotFoundError(f"Required benchmark instance file not found at: {file_path}")
 
     for instance_name, file_path in actual_files:
         print(f"\n========================================\nRunning Instance: {instance_name}\n========================================")
@@ -61,18 +73,30 @@ def run_benchmarks(instances: List[str], data_dir: str, output_dir: str) -> None
         )
         
         # 2. Proposed Solver
-        print("Executing Proposed Solver (ILS + VNS)...")
+        print(f"Executing Proposed Solver ({method.upper()})...")
         start_time = time.time()
-        proposed_sol = solve_proposed(nodes, vehicle, max_iter=20)
+        proposed_sol = solve_proposed(nodes, vehicle, max_iter=20, method=method)
         proposed_runtime = time.time() - start_time
         proposed_eval = evaluate_solution(proposed_sol, proposed_runtime)
         
         # Save proposed visualization
         plot_routes(
             proposed_sol, nodes, 
-            title=f"Proposed Solver (ILS + VNS): {instance_name}", 
+            title=f"Proposed Solver ({method.upper()}): {instance_name}", 
             save_path=os.path.join(output_dir, f"{instance_name}_proposed.png")
         )
+        
+        # Lookup BKS details
+        bks_info = BKS_DATABASE.get(instance_name.lower(), None)
+        bks_dist = bks_info["distance"] if bks_info else None
+        bks_veh = bks_info["vehicles"] if bks_info else None
+        
+        # Calculate gaps
+        baseline_dist_gap = ((baseline_eval["total_distance"] - bks_dist) / bks_dist * 100) if bks_dist else None
+        baseline_veh_gap = (baseline_eval["num_routes"] - bks_veh) if bks_veh is not None else None
+        
+        proposed_dist_gap = ((proposed_eval["total_distance"] - bks_dist) / bks_dist * 100) if bks_dist else None
+        proposed_veh_gap = (proposed_eval["num_routes"] - bks_veh) if bks_veh is not None else None
         
         # Store results
         results.append({
@@ -84,19 +108,27 @@ def run_benchmarks(instances: List[str], data_dir: str, output_dir: str) -> None
             "Feasible": baseline_eval["feasible"],
             "CapacityViolations": baseline_eval["capacity_violations"],
             "BatteryViolations": baseline_eval["battery_violations"],
-            "TimeWindowViolations": baseline_eval["time_window_violations"]
+            "TimeWindowViolations": baseline_eval["time_window_violations"],
+            "BKS_Distance": bks_dist if bks_dist is not None else "",
+            "BKS_Routes": bks_veh if bks_veh is not None else "",
+            "Distance_Gap_Pct": f"{baseline_dist_gap:.2f}" if baseline_dist_gap is not None else "",
+            "Vehicle_Gap": baseline_veh_gap if baseline_veh_gap is not None else ""
         })
         
         results.append({
             "Instance": instance_name,
-            "Solver": "Proposed",
+            "Solver": f"Proposed ({method.upper()})",
             "Distance": proposed_eval["total_distance"],
             "Routes": proposed_eval["num_routes"],
             "Runtime": proposed_eval["runtime"],
             "Feasible": proposed_eval["feasible"],
             "CapacityViolations": proposed_eval["capacity_violations"],
             "BatteryViolations": proposed_eval["battery_violations"],
-            "TimeWindowViolations": proposed_eval["time_window_violations"]
+            "TimeWindowViolations": proposed_eval["time_window_violations"],
+            "BKS_Distance": bks_dist if bks_dist is not None else "",
+            "BKS_Routes": bks_veh if bks_veh is not None else "",
+            "Distance_Gap_Pct": f"{proposed_dist_gap:.2f}" if proposed_dist_gap is not None else "",
+            "Vehicle_Gap": proposed_veh_gap if proposed_veh_gap is not None else ""
         })
 
     # Write results.csv
@@ -104,7 +136,8 @@ def run_benchmarks(instances: List[str], data_dir: str, output_dir: str) -> None
     with open(results_csv_path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=[
             "Instance", "Solver", "Distance", "Routes", "Runtime", 
-            "Feasible", "CapacityViolations", "BatteryViolations", "TimeWindowViolations"
+            "Feasible", "CapacityViolations", "BatteryViolations", "TimeWindowViolations",
+            "BKS_Distance", "BKS_Routes", "Distance_Gap_Pct", "Vehicle_Gap"
         ])
         writer.writeheader()
         writer.writerows(results)
@@ -112,18 +145,24 @@ def run_benchmarks(instances: List[str], data_dir: str, output_dir: str) -> None
 
     # Build comparison pivoted data
     comparison_rows = []
+    unique_instance_names = [f[0] for f in actual_files]
     
-    for instance_name in instances:
+    for instance_name in unique_instance_names:
         b_res = next(r for r in results if r["Instance"] == instance_name and r["Solver"] == "Baseline")
-        p_res = next(r for r in results if r["Instance"] == instance_name and r["Solver"] == "Proposed")
+        p_res = next(r for r in results if r["Instance"] == instance_name and r["Solver"].startswith("Proposed"))
         
         comparison_rows.append({
             "Instance": instance_name,
+            "BKS_Distance": b_res["BKS_Distance"],
+            "BKS_Routes": b_res["BKS_Routes"],
             "Baseline_Distance": f"{b_res['Distance']:.2f}",
             "Proposed_Distance": f"{p_res['Distance']:.2f}",
-            "Feasibility_Improvement": "Baseline = Infeasible, Proposed = Feasible",
+            "Baseline_Distance_Gap_Pct": b_res["Distance_Gap_Pct"],
+            "Proposed_Distance_Gap_Pct": p_res["Distance_Gap_Pct"],
             "Baseline_Routes": b_res["Routes"],
             "Proposed_Routes": p_res["Routes"],
+            "Baseline_Vehicle_Gap": b_res["Vehicle_Gap"],
+            "Proposed_Vehicle_Gap": p_res["Vehicle_Gap"],
             "Baseline_Feasible": b_res["Feasible"],
             "Proposed_Feasible": p_res["Feasible"],
             "Baseline_Runtime_Sec": f"{b_res['Runtime']:.3f}",
@@ -134,8 +173,9 @@ def run_benchmarks(instances: List[str], data_dir: str, output_dir: str) -> None
     comp_csv_path = os.path.join(output_dir, "comparison_table.csv")
     with open(comp_csv_path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=[
-            "Instance", "Baseline_Distance", "Proposed_Distance", "Feasibility_Improvement",
-            "Baseline_Routes", "Proposed_Routes", "Baseline_Feasible", "Proposed_Feasible",
+            "Instance", "BKS_Distance", "BKS_Routes", "Baseline_Distance", "Proposed_Distance",
+            "Baseline_Distance_Gap_Pct", "Proposed_Distance_Gap_Pct", "Baseline_Routes", "Proposed_Routes",
+            "Baseline_Vehicle_Gap", "Proposed_Vehicle_Gap", "Baseline_Feasible", "Proposed_Feasible",
             "Baseline_Runtime_Sec", "Proposed_Runtime_Sec"
         ])
         writer.writeheader()
@@ -149,12 +189,14 @@ def generate_markdown_report(comp_rows: List[Dict[str, Any]], results: List[Dict
     report_path = os.path.abspath(os.path.join(output_dir, "../reports/summary_report.md"))
     
     # Create markdown table text
-    table_md = "| Instance | Baseline Dist | Proposed Dist | Feasibility Improvement | Baseline Routes | Proposed Routes | Baseline Feasible | Proposed Feasible | Baseline Run (s) | Proposed Run (s) |\n"
-    table_md += "| :--- | :---: | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: |\n"
+    table_md = "| Instance | BKS Dist | BKS Routes | Baseline Dist | Proposed Dist | Baseline Gap (%) | Proposed Gap (%) | Baseline Routes | Proposed Routes | Baseline Veh Gap | Proposed Veh Gap | Baseline Feasible | Proposed Feasible | Baseline Run (s) | Proposed Run (s) |\n"
+    table_md += "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n"
     
     for row in comp_rows:
-        table_md += (f"| {row['Instance']} | {row['Baseline_Distance']} | {row['Proposed_Distance']} | "
-                     f"{row['Feasibility_Improvement']} | {row['Baseline_Routes']} | {row['Proposed_Routes']} | "
+        table_md += (f"| {row['Instance']} | {row['BKS_Distance']} | {row['BKS_Routes']} | "
+                     f"{row['Baseline_Distance']} | {row['Proposed_Distance']} | {row['Baseline_Distance_Gap_Pct']}% | {row['Proposed_Distance_Gap_Pct']}% | "
+                     f"{row['Baseline_Routes']} | {row['Proposed_Routes']} | "
+                     f"{row['Baseline_Vehicle_Gap']} | {row['Proposed_Vehicle_Gap']} | "
                      f"{row['Baseline_Feasible']} | {row['Proposed_Feasible']} | {row['Baseline_Runtime_Sec']} | "
                      f"{row['Proposed_Runtime_Sec']} |\n")
 
@@ -190,3 +232,4 @@ The project demonstrates that combining spatial nearest neighbor clustering with
     with open(report_path, 'w') as f:
         f.write(report_content)
     print(f"Summary Markdown Report saved to {report_path}")
+

@@ -5,7 +5,7 @@ from baseline import solve_baseline
 from proposed_method import solve_proposed
 from evaluation import evaluate_solution
 from visualization import plot_routes
-from experiment_runner import run_benchmarks
+from experiment_runner import run_benchmarks, discover_local_instances
 
 def print_metrics(eval_res: dict, solver_name: str):
     print(f"\n--- {solver_name} Solver Metrics ---")
@@ -27,13 +27,26 @@ def main():
                         help="Directory to read/download benchmark files")
     parser.add_argument("--output-dir", type=str, default="./output",
                         help="Directory to save output files and plots")
+    parser.add_argument("--method", type=str, default="alns", choices=["ils", "alns"],
+                        help="Solver method (ils or alns, default is alns)")
     
     args = parser.parse_args()
 
     if args.run_all:
-        instances = ["C101_21", "R101_21", "RC101_21"]
-        print(f"Starting EVRPTW comparative benchmarking on: {instances}")
-        run_benchmarks(instances, args.data_dir, args.output_dir)
+        all_raw = discover_local_instances(args.data_dir)
+        # Filter for large instances (nodes = 100 customers + 21 stations) that end with _21
+        instances = [name for name in all_raw if name.lower().endswith('_21')]
+        
+        print(f"Discovered {len(instances)} large-scale EVRPTW instances in '{args.data_dir}':")
+        print(f"First 10: {instances[:10]}")
+        print(f"Last 10:  {instances[-10:]}")
+        print(f"Starting EVRPTW comparative benchmarking on all {len(instances)} instances...")
+        
+        # Verify count
+        if len(instances) != 56:
+            print(f"Warning: Expected exactly 56 instances, but found {len(instances)}.")
+            
+        run_benchmarks(instances, args.data_dir, args.output_dir, method=args.method)
         print(f"\nBenchmarking complete. All reports and visual plots are saved under: {args.output_dir}")
         return
 
@@ -63,10 +76,10 @@ def main():
 
         # 2. Run Proposed Method
         start = time.time()
-        proposed_sol = solve_proposed(nodes, vehicle, max_iter=20)
+        proposed_sol = solve_proposed(nodes, vehicle, max_iter=20, method=args.method)
         proposed_time = time.time() - start
         proposed_eval = evaluate_solution(proposed_sol, proposed_time)
-        print_metrics(proposed_eval, "Proposed (ILS + VNS)")
+        print_metrics(proposed_eval, f"Proposed ({args.method.upper()})")
         
         proposed_plot_path = os.path.join(args.output_dir, f"{args.instance}_proposed.png")
         plot_routes(proposed_sol, nodes, f"Proposed Solver: {args.instance}", proposed_plot_path)

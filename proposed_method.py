@@ -8,6 +8,16 @@ from distance import calculate_distance, init_distance_provider
 from charging import get_best_station_between, insert_charging_stations
 from local_search import local_search_optimize, try_optimize_sequence, merge_routes_optimization
 from evaluation import evaluate_solution
+from alns_operators import (
+    AdaptiveOperatorSelector,
+    destroy_random,
+    destroy_worst,
+    destroy_shaw,
+    destroy_charging_aware,
+    destroy_smallest_route,
+    repair_greedy,
+    repair_regret2
+)
 
 def check_candidate_feasibility(route_nodes: List[Node], candidate: Node, 
                                 vehicle: Vehicle, stations: List[Node], depot: Node) -> Optional[Route]:
@@ -205,16 +215,152 @@ def perturb_solution(solution: Solution, stations: List[Node], k: int = 3) -> So
 
     return Solution(final_routes)
 
-def solve_proposed(nodes: List[Node], vehicle: Vehicle, max_iter: int = 50, 
-                   initial_temp: float = 100.0, cooling_rate: float = 0.92) -> Solution:
+def get_objective(eval_res: dict, use_fleet_objective: bool = False) -> float:
+    if not eval_res["feasible"]:
+        return float('inf')
+    if use_fleet_objective:
+        return 10000.0 * eval_res["num_routes"] + eval_res["total_distance"]
+    return eval_res["total_distance"]
+
+def solve_proposed_alns(nodes: List[Node], vehicle: Vehicle, max_iter: int = 50, 
+                        initial_temp: float = 100.0, cooling_rate: float = 0.92,
+                        use_fleet_objective: bool = False, vns_frequency: int = 1) -> Solution:
     """
-    Proposed optimization method:
+    Proposed ALNS optimization method:
     - DistanceProvider initialization
     - Sequential Best-Insertion construction
-    - Post-construction Route Merge Optimization
-    - Local Search improvement (2-Opt, relocate, exchange, merge, station pruning)
-    - Iterated Local Search (ILS) loop with Simulated Annealing
+    - Adaptive Large Neighborhood Search loop with Roulette Wheel Selection
+    - Simulated Annealing acceptance checks
     """
+    # Initialize global DistanceProvider for fast lookup in distance-related queries
+    init_distance_provider(nodes, vehicle)
+    
+    stations = [n for n in nodes if n.is_station()]
+    n_customers = len([n for n in nodes if n.is_customer()])
+    
+    # 1. Construction Phase
+    current_sol = solve_initial_proposed(nodes, vehicle)
+    
+    # Pack routes immediately after construction
+    current_sol = merge_routes_optimization(current_sol, stations)
+    
+    # Run initial local search to optimize starting solution
+    current_sol = local_search_optimize(current_sol, stations)
+    
+    best_sol = current_sol
+    best_eval = evaluate_solution(best_sol)
+    
+    # Initial temperature and selector
+    temp = initial_temp
+    # Using P=20 for weight updates during shorter experimental runs
+    selector = AdaptiveOperatorSelector(P=20, r=0.1)
+    
+    # Track statistics
+    fallback_stats = {'fallback_count': 0}
+    
+    destroy_funcs = {
+        'random': destroy_random,
+        'worst': destroy_worst,
+        'shaw': destroy_shaw,
+        'charging_aware': destroy_charging_aware,
+        'smallest_route': destroy_smallest_route
+    }
+    
+    repair_funcs = {
+        'greedy': repair_greedy,
+        'regret2': repair_regret2
+    }
+    
+    for iteration in range(max_iter):
+        # 1. Draw pool size stochastically: 10% to 30% of customers
+        min_k = max(2, int(0.10 * n_customers))
+        max_k = max(3, int(0.30 * n_customers))
+        k = random.randint(min_k, max_k)
+        
+        # 2. Select operators via Roulette Wheel
+        d_name, r_name = selector.select_operators()
+        
+        # 3. Apply Destroy
+        partial_sol, pool = destroy_funcs[d_name](current_sol, k, stations)
+        
+        # 4. Apply Repair
+        rebuilt_sol = repair_funcs[r_name](partial_sol, pool, vehicle, stations, stats=fallback_stats)
+        
+        # 5. Local Search (Conditional for speed and frequency)
+        rebuilt_eval = evaluate_solution(rebuilt_sol)
+        if rebuilt_eval["feasible"]:
+            current_eval = evaluate_solution(current_sol)
+            
+            # Check if frequency dictates running VNS
+            if (iteration + 1) % vns_frequency == 0:
+                rebuilt_obj = get_objective(rebuilt_eval, use_fleet_objective)
+                current_obj = get_objective(current_eval, use_fleet_objective)
+                if rebuilt_obj < current_obj * 1.05:
+                    rebuilt_sol = local_search_optimize(rebuilt_sol, stations)
+                    rebuilt_eval = evaluate_solution(rebuilt_sol)
+                
+        # 6. Simulated Annealing acceptance checks
+        if rebuilt_eval["feasible"]:
+            rebuilt_obj = get_objective(rebuilt_eval, use_fleet_objective)
+            current_obj = get_objective(evaluate_solution(current_sol), use_fleet_objective)
+            best_obj = get_objective(best_eval, use_fleet_objective)
+            
+            if not best_eval["feasible"]:
+                best_sol = rebuilt_sol
+                best_eval = rebuilt_eval
+                current_sol = rebuilt_sol
+                selector.register_score(d_name, r_name, status=1)
+                continue
+                
+            delta = rebuilt_obj - current_obj
+            if delta < 0:
+                current_sol = rebuilt_sol
+                if rebuilt_obj < best_obj:
+                    best_sol = rebuilt_sol
+                    best_eval = rebuilt_eval
+                    selector.register_score(d_name, r_name, status=1)
+                else:
+                    selector.register_score(d_name, r_name, status=2)
+            else:
+                prob = math.exp(-delta / temp)
+                if random.random() < prob:
+                    current_sol = rebuilt_sol
+                    selector.register_score(d_name, r_name, status=3)
+        
+        temp *= cooling_rate
+        
+    # Print statistics before returning
+    print("\n================ ALNS RUN STATISTICS ================")
+    print(f"Fallback mechanism count (new routes created): {fallback_stats.get('fallback_count', 0)}")
+    print("Destroy Operator Total Frequencies:")
+    for name, count in selector.total_destroy_usage.items():
+        print(f"  - {name}: {count}")
+    print("Repair Operator Total Frequencies:")
+    for name, count in selector.total_repair_usage.items():
+        print(f"  - {name}: {count}")
+    print("Final Operator Weights:")
+    print("  Destroy weights:")
+    for name, w in selector.destroy_weights.items():
+        print(f"    - {name}: {w:.4f}")
+    print("  Repair weights:")
+    for name, w in selector.repair_weights.items():
+        print(f"    - {name}: {w:.4f}")
+    print("=====================================================\n")
+    
+    return best_sol
+
+def solve_proposed(nodes: List[Node], vehicle: Vehicle, max_iter: int = 50, 
+                   initial_temp: float = 100.0, cooling_rate: float = 0.92,
+                   method: str = 'alns', use_fleet_objective: bool = False,
+                   vns_frequency: int = 1) -> Solution:
+    """
+    Proposed optimization method dispatcher:
+    Calls ALNS or ILS solver based on the 'method' parameter.
+    """
+    if method.lower() == 'alns':
+        return solve_proposed_alns(nodes, vehicle, max_iter, initial_temp, cooling_rate,
+                                   use_fleet_objective, vns_frequency)
+    
     # Initialize global DistanceProvider for fast lookup in distance-related queries
     init_distance_provider(nodes, vehicle)
     

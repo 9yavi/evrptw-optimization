@@ -225,11 +225,15 @@ def merge_routes_optimization(solution: Solution, stations: List[Node]) -> Solut
                 if total_demand > vehicle.capacity:
                     continue
                 
-                # Try to merge by appending r2's customers to r1's customers
+                # Try to merge by sorting all customers chronologically by ready_time
                 depot = r1.nodes[0]
-                merged_custs = [depot] + r1_cust + r2_cust + [depot]
-                
+                merged_custs = [depot] + sorted(r1_cust + r2_cust, key=lambda node: node.ready_time) + [depot]
                 opt_route = try_optimize_sequence(merged_custs, vehicle, stations)
+                
+                if not opt_route:
+                    # Fallback to direct end-to-end concatenation
+                    merged_custs_direct = [depot] + r1_cust + r2_cust + [depot]
+                    opt_route = try_optimize_sequence(merged_custs_direct, vehicle, stations)
                 
                 if opt_route:
                     # Merge successful! Remove routes i and j, add merged route
