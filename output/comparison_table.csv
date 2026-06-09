@@ -1,4 +1,0 @@
-Instance,Baseline_Distance,Proposed_Distance,Feasibility_Improvement,Baseline_Routes,Proposed_Routes,Baseline_Feasible,Proposed_Feasible,Baseline_Runtime_Sec,Proposed_Runtime_Sec
-C101_21,829.89,1387.52,"Baseline = Infeasible, Proposed = Feasible",5,15,False,True,0.001,31.498
-R101_21,975.07,1967.99,"Baseline = Infeasible, Proposed = Feasible",4,26,False,True,0.001,24.081
-RC101_21,1028.86,2174.83,"Baseline = Infeasible, Proposed = Feasible",4,22,False,True,0.001,25.752
